@@ -14,6 +14,8 @@ enum EvalutorError: Error {
     case badJSON
     case unableToEvaluateASTNode(_ node: ASTNode)
     case symbolNotFound(_ symbolName: String)
+    case unexpectedArgumentType(_ badValue: LispValue)
+    case incorrectNumberOfArguments(_ badArgs: [LispValue])
     case notImplemented
 }
 
@@ -22,8 +24,32 @@ enum EvalutorError: Error {
 
 typealias LispFunction = ([LispValue]) throws -> (LispValue)
 
-func LispPlus(_ args: [LispValue]) throws -> LispValue {
-    let sum = args[0].number! + args[1].number! // STOPSHIP fix me
+func LispAdd(_ args: [LispValue]) throws -> LispValue {
+    let sum: Double = try args.reduce(0) { partialResult, nextValue in
+        guard case .number(let d) = nextValue else {
+            throw EvalutorError.unexpectedArgumentType(nextValue)
+        }
+        return partialResult + d
+    }
+    return .number(sum)
+}
+
+func LispSubtract(_ args: [LispValue]) throws -> LispValue {
+    guard let firstArg = args.first else {
+        throw EvalutorError.incorrectNumberOfArguments(args)
+    }
+    guard case .number(let firstNumber) = firstArg else {
+        throw EvalutorError.unexpectedArgumentType(firstArg)
+    }
+    guard args.count > 1 else {
+        return .number(-firstNumber)
+    }
+    let sum: Double = try args.dropFirst(1).reduce(firstNumber) { partialResult, nextValue in
+        guard case .number(let d) = nextValue else {
+            throw EvalutorError.unexpectedArgumentType(nextValue)
+        }
+        return partialResult - d
+    }
     return .number(sum)
 }
 
@@ -103,7 +129,8 @@ typealias Environment = Dictionary<String, LispValue>
 
 let g_env: Environment = [
     "pi": .number(3.14159),
-    "+": .builtinFunc(LispPlus)
+    "+": .builtinFunc(LispAdd),
+    "-": .builtinFunc(LispSubtract)
 ]
 
 func lookup(symbolName: String, env: Environment) throws -> LispValue {
