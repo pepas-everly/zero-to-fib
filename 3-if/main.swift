@@ -93,6 +93,7 @@ enum LispValue: CustomStringConvertible {
     case number(_ value: Double)
     case boolean(_ value: Bool)
     case builtinFunc(_ value: LispFunction)
+    case noValue
     
     var description: String {
         switch self {
@@ -111,26 +112,28 @@ enum LispValue: CustomStringConvertible {
             }
         case .builtinFunc(_):
             return "STOPSHIP"
+        case .noValue:
+            return ""
         }
     }
     
     var number: Double? {
         switch self {
         case .number(let value): return value
-        case .boolean, .builtinFunc: return nil
+        case .boolean, .builtinFunc, .noValue: return nil
         }
     }
 
     var boolean: Bool? {
         switch self {
         case .boolean(let value): return value
-        case .number, .builtinFunc: return nil
+        case .number, .builtinFunc, .noValue: return nil
         }
     }
 
     var builtinFunc: LispFunction? {
         switch self {
-        case .boolean, .number: return nil
+        case .boolean, .number, .noValue: return nil
         case .builtinFunc(let value): return value
         }
     }
@@ -198,6 +201,16 @@ func lisp_apply(oper: LispValue, operands: [LispValue]) throws -> LispValue {
     return try oper.builtinFunc!(operands) // STOPSHIP
 }
 
+extension LispValue {
+    var isTruthy: Bool {
+        if case .boolean(let value) = self {
+            return value
+        } else {
+            return true
+        }
+    }
+}
+
 func lisp_eval(ast: ASTNode, env: Environment) throws -> LispValue {
     if let value = ast.number {
         return .number(value)
@@ -206,13 +219,45 @@ func lisp_eval(ast: ASTNode, env: Environment) throws -> LispValue {
         return try lookup(symbolName: symbolName, env: env)
 
     } else if let nodes = ast.list {
-        let values = try nodes.map {
-            return try lisp_eval(ast: $0, env: env)
+        guard let head = nodes[safe: 0] else {
+            // TODO: maybe make a specific "can't evalue zero-argument list" error?
+            throw EvalutorError.incorrectNumberOfArguments([])
         }
-        let oper = values[0]
-        let operands = Array(values.dropFirst())
-        return try lisp_apply(oper: oper, operands: operands)
-
+        
+        // This is an 'if' statement.
+        if head.symbol == "if" {
+            guard let predicate = nodes[safe: 1] else {
+                // TODO: maybe make a specific error here
+                throw EvalutorError.incorrectNumberOfArguments([])
+            }
+            let predicateValue = try lisp_eval(ast: predicate, env: env)
+            if predicateValue.isTruthy {
+                // evaluate and return consequent.
+                guard let consequent = nodes[safe: 2] else {
+                    // TODO: maybe make a specific error here
+                    throw EvalutorError.incorrectNumberOfArguments([])
+                }
+                let consequentValue = try lisp_eval(ast: consequent, env: env)
+                return consequentValue
+            } else {
+                // evaluate and return alternative.
+                guard let alternative = nodes[safe: 3] else {
+                    return .noValue
+                }
+                let alternativeValue = try lisp_eval(ast: alternative, env: env)
+                return alternativeValue
+            }
+            
+        } else {
+            // This is a typical list.
+            let values = try nodes.map {
+                return try lisp_eval(ast: $0, env: env)
+            }
+            let oper = values[0]
+            let operands = Array(values.dropFirst())
+            return try lisp_apply(oper: oper, operands: operands)
+        }
+        
     } else {
         throw EvalutorError.unableToEvaluateASTNode(ast)
     }
@@ -272,3 +317,12 @@ func main() throws {
     }
 }
 try main()
+
+
+// Thanks to https://stackoverflow.com/questions/25329186/safe-bounds-checked-array-lookup-in-swift-through-optional-bindings
+extension Collection {
+    /// Returns the element at the specified index if it is within bounds, otherwise nil.
+    subscript (safe index: Index) -> Element? {
+        return indices.contains(index) ? self[index] : nil
+    }
+}
